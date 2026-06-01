@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
 from pathlib import Path
+import os
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -140,5 +141,9 @@ REST_FRAMEWORK = {
 MEDIA_URL = '/media/'
 
 # The actual directory path on your computer hard drive where images will save
-import os
+
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+
+KHALTI_SECRET_KEY = "cba363286b624ebcbe642e645486572e"  
+KHALTI_INITIATE_URL = "https://dev.khalti.com/api/v2/epayment/initiate/"
+KHALTI_LOOKUP_URL = "https://dev.khalti.com/api/v2/epayment/lookup/"

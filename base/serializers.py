@@ -78,13 +78,13 @@ class CartItemSerializer(serializers.ModelSerializer):
         return obj.quantity * obj.product.price
 
 
-# 🆕 2. Direct Web-Form Input Serializer for Add Item Page
+# 2. Direct Web-Form Input Serializer for Add Item Page
 class AddToCartSerializer(serializers.Serializer):
     product_id = serializers.IntegerField(min_value=1, help_text="Enter the numeric ID of the product")
     quantity = serializers.IntegerField(default=1, min_value=1, help_text="Enter quantity (minimum 1)")
 
 
-# 🛒 3. Main Cart Serializer (Your original code handling outputs)
+#  3. Main Cart Serializer (Your original code handling outputs)
 class CartSerializer(serializers.ModelSerializer):
     items = CartItemSerializer(many=True, read_only=True)
     grand_total = serializers.SerializerMethodField()
@@ -124,3 +124,18 @@ class ProductImageSerializer(serializers.ModelSerializer):
 
 
 
+
+class KhaltiInitiateSerializer(serializers.Serializer):
+    order_number = serializers.CharField(max_length=50)
+
+    def validate_order_number(self, value):
+        user = self.context['request'].user
+        try:
+            order = Order.objects.get(order_number=value, user=user)
+        except Order.DoesNotExist:
+            raise serializers.ValidationError("Order not found or does not belong to you.")
+        
+        if order.order_status != 'pending':
+            raise serializers.ValidationError(f"This order cannot be paid. Status is currently: {order.order_status}")
+            
+        return value
