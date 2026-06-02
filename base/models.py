@@ -1,5 +1,8 @@
+from decimal import Decimal
+
 from django.db import models
 from django.contrib.auth.models import User
+from django.utils import timezone
 from django.utils.text import slugify
 
 
@@ -153,6 +156,19 @@ class Payment(models.Model):
 
     def __str__(self):
         return f"Payment {self.transaction_reference} for Order {self.order.order_number}"
+
+    def save(self, *args, **kwargs):
+        if self.order is not None and self.amount is not None:
+            # Automatically complete a payment when amount covers the order total
+            if self.amount >= self.order.total_amount:
+                self.payment_status = 'completed'
+                if self.paid_at is None:
+                    self.paid_at = timezone.now()
+            elif self.payment_status not in ('completed', 'refunded'):
+                # Keep manual pending/failed state for partial or placeholder payments
+                self.payment_status = 'pending'
+
+        super().save(*args, **kwargs)
 
 
 class Shipment(models.Model):

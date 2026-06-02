@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from django.shortcuts import render
 
 # Create your views here.
@@ -171,6 +173,49 @@ def khalti_authorization_header():
     return f'Key {secret_key}'
 
 
+def extract_paid_amount(verification_data):
+    if verification_data is None:
+        return None
+
+    if isinstance(verification_data, (int, float, Decimal)):
+        return Decimal(str(verification_data))
+
+    if isinstance(verification_data, str):
+        try:
+            return Decimal(verification_data)
+        except Exception:
+            return None
+
+    if isinstance(verification_data, dict):
+        for key in (
+            'amount', 'transaction_amount', 'paid_amount', 'amount_paid',
+            'payment_amount', 'amountInPaisa', 'amount_in_paisa', 'total_amount'
+        ):
+            if key in verification_data:
+                value = extract_paid_amount(verification_data[key])
+                if value is not None:
+                    return value
+
+        for key, value in verification_data.items():
+            if any(token in key.lower() for token in ('amount', 'paid', 'payment')):
+                value = extract_paid_amount(value)
+                if value is not None:
+                    return value
+
+        for value in verification_data.values():
+            value = extract_paid_amount(value)
+            if value is not None:
+                return value
+
+    if isinstance(verification_data, list):
+        for item in verification_data:
+            value = extract_paid_amount(item)
+            if value is not None:
+                return value
+
+    return None
+
+
 class KhaltiPaymentViewSet(viewsets.ViewSet):
     permission_classes = [IsAuthenticated]
 
@@ -225,7 +270,7 @@ class KhaltiPaymentViewSet(viewsets.ViewSet):
                 defaults={
                     'transaction_reference': response_data['pidx'],
                     'payment_method': 'Khalti',
-                    'amount': order.total_amount,
+                    'amount': Decimal('0.00'),
                     'payment_status': 'pending',
                     'paid_at': None,
                 }
@@ -267,31 +312,55 @@ class KhaltiPaymentViewSet(viewsets.ViewSet):
             return Response({"error": "Verification request dropped by gateway network service."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
         # 3. Check explicit Khalti ledger system authorization
-        if response.status_code == 200 and verification_data.get('status') == 'Completed':
-            order.order_status = 'processing' # Transition tracking state from pending to processing
+        paid_amount = extract_paid_amount(verification_data)
+        if paid_amount is not None:
+            if paid_amount > order.total_amount * Decimal('10') and paid_amount % Decimal('100') == 0:
+                paid_amount = paid_amount / Decimal('100')
+
+        if paid_amount is None:
+            paid_amount = Decimal('0.00')
+
+        is_complete = paid_amount >= order.total_amount
+        transaction_ok = response.status_code == 200 and verification_data.get('status') == 'Completed'
+        if transaction_ok or paid_amount > Decimal('0.00'):
+            order.order_status = 'processing' if is_complete else 'pending'
             order.khalti_transaction_id = verification_data.get('transaction_id') or transaction_id
             order.save()
 
+            payment_status = 'completed' if is_complete else 'pending'
             Payment.objects.update_or_create(
                 order=order,
                 defaults={
                     'transaction_reference': order.khalti_pidx or transaction_id,
                     'payment_method': 'Khalti',
-                    'amount': order.total_amount,
-                    'payment_status': 'completed',
+                    'amount': paid_amount,
+                    'payment_status': payment_status,
                     'paid_at': timezone.now(),
                 }
             )
-            
+
             return Response({
-                "status": "success", 
-                "message": f"Payment finalized for Order {order.order_number}. Order is now processing."
+                "status": "success",
+                "message": (
+                    f"Payment recorded for Order {order.order_number}. "
+                    f"Paid {paid_amount}, due {order.total_amount - paid_amount}."
+                )
             }, status=status.HTTP_200_OK)
 
-        # Handle failure state tracking 
+        # Handle failure state tracking
         order.order_status = 'cancelled'
         order.save()
+        Payment.objects.update_or_create(
+            order=order,
+            defaults={
+                'transaction_reference': order.khalti_pidx or transaction_id,
+                'payment_method': 'Khalti',
+                'amount': paid_amount,
+                'payment_status': 'failed',
+                'paid_at': timezone.now() if paid_amount > Decimal('0.00') else None,
+            }
+        )
         return Response({
-            "status": "failed", 
+            "status": "failed",
             "message": f"Payment validation rejected. Status: {verification_data.get('status', 'Unknown')}"
         }, status=status.HTTP_400_BAD_REQUEST)
