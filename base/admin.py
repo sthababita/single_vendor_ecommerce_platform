@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from django.contrib import admin
 from django import forms
 from django.http import JsonResponse
@@ -106,6 +108,33 @@ class CartItemInline(admin.TabularInline):
     class Media:
         js = ('base/admin/cart_item_auto_fill.js',)
 
+
+SHIPPING_AMOUNT_CHOICES = (
+    (Decimal('100.00'), 'Kathmandu Valley (100)'),
+    (Decimal('200.00'), 'Outside Valley (200)'),
+)
+
+
+class OrderAdminForm(forms.ModelForm):
+    total_amount = forms.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        required=False,
+        disabled=True,
+        label='Total amount',
+    )
+    shipping_amount = forms.TypedChoiceField(
+        choices=(('', 'Select shipping amount'),) + SHIPPING_AMOUNT_CHOICES,
+        coerce=Decimal,
+        empty_value=Decimal('0.00'),
+        required=False,
+        label='Shipping amount',
+    )
+
+    class Meta:
+        model = Order
+        fields = '__all__'
+
 # ==========================================
 # 2. MODEL ADMIN CONFIGURATIONS
 # ==========================================
@@ -136,24 +165,28 @@ class ProductAdmin(admin.ModelAdmin):
 
 @admin.register(Order)
 class OrderAdmin(admin.ModelAdmin):
+    form = OrderAdminForm
     list_display = ('order_number', 'user', 'total_amount', 'order_status', 'created_at')
     list_filter = ('order_status', 'created_at')
     search_fields = ('order_number', 'user__username', 'user__email')
-    readonly_fields = ('order_number', 'total_amount', 'tax_amount', 'shipping_amount', 'created_at')
+    readonly_fields = ('order_number', 'total_amount', 'created_at')
     
-    # Places items, payments, and shipping info inside the main Order details page
-    inlines = [OrderItemInline, PaymentInline, ShipmentInline]
+    # Places items inside the main Order details page
+    inlines = [OrderItemInline]
+
+    class Media:
+        js = ('base/admin/order_item_auto_fill.js', 'base/admin/order_items_reorder.js')
     
     # Organizes page fields into clear collapsible dropdown sections
     fieldsets = (
-        ('Order Details', {
+        ('Order', {
             'fields': ('order_number', 'user', 'order_status', 'created_at')
         }),
-        ('Financial Breakdowns', {
-            'fields': ('tax_amount', 'shipping_amount', 'total_amount'),
-        }),
-        ('Shipping & Billing Addresses', {
+        ('Shipment', {
             'fields': ('shipping_address', 'billing_address'),
+        }),
+        ('Finance', {
+            'fields': ('shipping_amount', 'total_amount'),
         }),
     )
 
@@ -161,8 +194,21 @@ class OrderAdmin(admin.ModelAdmin):
         if not obj.order_number:
             obj.order_number = f"ORD-{uuid.uuid4().hex[:8].upper()}"
 
-        if obj.total_amount is None:
-            obj.total_amount = 0
+        def to_decimal(value):
+            if isinstance(value, Decimal):
+                return value
+            if value is None:
+                return Decimal('0.00')
+            return Decimal(str(value))
+
+        order_items_total = sum(
+            to_decimal(item.quantity) * to_decimal(item.unit_price) for item in obj.items.all()
+        ) if obj.pk else Decimal('0.00')
+
+        tax_amount = to_decimal(obj.tax_amount)
+        shipping_amount = to_decimal(obj.shipping_amount)
+
+        obj.total_amount = order_items_total + tax_amount + shipping_amount
 
         super().save_model(request, obj, form, change)
 
@@ -190,10 +236,22 @@ class OrderAdmin(admin.ModelAdmin):
         self.update_order_total(form.instance)
 
     def update_order_total(self, order):
+        def to_decimal(value):
+            if isinstance(value, Decimal):
+                return value
+            if value is None:
+                return Decimal('0.00')
+            return Decimal(str(value))
+
+        order_items_total = sum(
+            to_decimal(item.quantity) * to_decimal(item.unit_price)
+            for item in order.items.all()
+        )
+
         order.total_amount = (
-            sum(item.quantity * item.unit_price for item in order.items.all())
-            + order.tax_amount
-            + order.shipping_amount
+            order_items_total
+            + to_decimal(order.tax_amount)
+            + to_decimal(order.shipping_amount)
         )
         order.save(update_fields=['total_amount'])
 
@@ -258,5 +316,30 @@ class CartAdmin(admin.ModelAdmin):
 # 3. OPTIONAL INDEPENDENT LOOKUPS
 # ==========================================
 # Allows viewing payments and shipments independent of the main orders screen
-admin.site.register(Payment)
+
+@admin.register(Payment)
+class PaymentAdmin(admin.ModelAdmin):
+    list_display = ('order', 'transaction_reference', 'payment_method', 'payment_status', 'get_total_amount', 'get_paid_amount', 'get_due_amount')
+    list_filter = ('payment_status', 'payment_method')
+    search_fields = ('transaction_reference', 'order__order_number')
+    readonly_fields = ('transaction_reference', 'get_total_amount', 'get_paid_amount', 'get_due_amount')
+
+    def get_total_amount(self, obj):
+        return obj.order.total_amount if obj.order else '-'
+    get_total_amount.short_description = 'Total Amount'
+
+    def get_paid_amount(self, obj):
+        return obj.amount if obj.amount else '-'
+    get_paid_amount.short_description = 'Paid Amount'
+
+    def get_due_amount(self, obj):
+        if obj.order and obj.amount:
+            due = obj.order.total_amount - obj.amount
+            return due if due > 0 else 0
+        elif obj.order:
+            return obj.order.total_amount
+        return '-'
+    get_due_amount.short_description = 'Due Amount'
+
+
 admin.site.register(Shipment)

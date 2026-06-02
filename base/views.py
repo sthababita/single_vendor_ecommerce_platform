@@ -6,7 +6,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly
 from rest_framework.decorators import action
 
-from .models import Category, Product, Cart, CartItem, Order, OrderItem,ProductImage
+from .models import Category, Product, Cart, CartItem, Order, OrderItem, ProductImage, Payment
 from rest_framework.parsers import MultiPartParser, FormParser
 from .serializers import ProductImageSerializer
 
@@ -158,7 +158,9 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.shortcuts import get_object_or_404
 
-from .models import Order
+from django.utils import timezone
+
+from .models import Order, Payment
 from .serializers import KhaltiInitiateSerializer
 
 
@@ -216,6 +218,18 @@ class KhaltiPaymentViewSet(viewsets.ViewSet):
             # 4. Bind the returned reference identifier directly into your order record
             order.khalti_pidx = response_data['pidx']
             order.save()
+
+            # 5. Create or update a pending Payment record for this order
+            Payment.objects.update_or_create(
+                order=order,
+                defaults={
+                    'transaction_reference': response_data['pidx'],
+                    'payment_method': 'Khalti',
+                    'amount': order.total_amount,
+                    'payment_status': 'pending',
+                    'paid_at': None,
+                }
+            )
             
             return Response({
                 "pidx": response_data['pidx'],
@@ -257,6 +271,17 @@ class KhaltiPaymentViewSet(viewsets.ViewSet):
             order.order_status = 'processing' # Transition tracking state from pending to processing
             order.khalti_transaction_id = verification_data.get('transaction_id') or transaction_id
             order.save()
+
+            Payment.objects.update_or_create(
+                order=order,
+                defaults={
+                    'transaction_reference': order.khalti_pidx or transaction_id,
+                    'payment_method': 'Khalti',
+                    'amount': order.total_amount,
+                    'payment_status': 'completed',
+                    'paid_at': timezone.now(),
+                }
+            )
             
             return Response({
                 "status": "success", 
