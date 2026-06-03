@@ -2,11 +2,86 @@ from rest_framework import serializers
 from django.contrib.auth.models import User
 from .models import Address, Category, Product, ProductImage, Cart, CartItem, Order, OrderItem
 
-# --- USER SERIALIZER ---
+
+class AddressSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Address
+        fields = [
+            'id', 'address_type', 'is_default', 'address_line1', 'address_line2',
+            'city', 'state', 'postal_code', 'country',
+        ]
+        read_only_fields = ['id', 'address_type', 'is_default']
+
+
 class UserSerializer(serializers.ModelSerializer):
+    shipping_address = serializers.SerializerMethodField()
+    billing_address = serializers.SerializerMethodField()
+
     class Meta:
         model = User
-        fields = ['id', 'username', 'email', 'first_name', 'last_name']
+        fields = ['id', 'username', 'email', 'first_name', 'last_name', 'shipping_address', 'billing_address']
+
+    def get_shipping_address(self, obj):
+        address = obj.addresses.filter(address_type='shipping', is_default=True).first()
+        return AddressSerializer(address).data if address else None
+
+    def get_billing_address(self, obj):
+        address = obj.addresses.filter(address_type='billing', is_default=True).first()
+        return AddressSerializer(address).data if address else None
+
+
+class UserRegistrationSerializer(serializers.ModelSerializer):
+    password = serializers.CharField(write_only=True)
+    shipping_address_line1 = serializers.CharField(required=True)
+    shipping_address_line2 = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    shipping_city = serializers.CharField(required=True)
+    shipping_state = serializers.CharField(required=True)
+    shipping_postal_code = serializers.CharField(required=True)
+    shipping_country = serializers.CharField(required=True)
+
+    billing_address_line1 = serializers.CharField(required=True)
+    billing_address_line2 = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    billing_city = serializers.CharField(required=True)
+    billing_state = serializers.CharField(required=True)
+    billing_postal_code = serializers.CharField(required=True)
+    billing_country = serializers.CharField(required=True)
+
+    class Meta:
+        model = User
+        fields = [
+            'username', 'email', 'password', 'first_name', 'last_name',
+            'shipping_address_line1', 'shipping_address_line2', 'shipping_city',
+            'shipping_state', 'shipping_postal_code', 'shipping_country',
+            'billing_address_line1', 'billing_address_line2', 'billing_city',
+            'billing_state', 'billing_postal_code', 'billing_country',
+        ]
+
+    def create(self, validated_data):
+        shipping_data = {
+            'address_line1': validated_data.pop('shipping_address_line1'),
+            'address_line2': validated_data.pop('shipping_address_line2', ''),
+            'city': validated_data.pop('shipping_city'),
+            'state': validated_data.pop('shipping_state'),
+            'postal_code': validated_data.pop('shipping_postal_code'),
+            'country': validated_data.pop('shipping_country'),
+            'address_type': 'shipping',
+            'is_default': True,
+        }
+        billing_data = {
+            'address_line1': validated_data.pop('billing_address_line1'),
+            'address_line2': validated_data.pop('billing_address_line2', ''),
+            'city': validated_data.pop('billing_city'),
+            'state': validated_data.pop('billing_state'),
+            'postal_code': validated_data.pop('billing_postal_code'),
+            'country': validated_data.pop('billing_country'),
+            'address_type': 'billing',
+            'is_default': True,
+        }
+        password = validated_data.pop('password')
+        user = User.objects.create_user(password=password, **validated_data)
+        Address.objects.create(user=user, **shipping_data)
+        Address.objects.create(user=user, **billing_data)
+        return user
 
 
 # --- PRODUCT CATALOG SERIALIZERS ---
@@ -46,24 +121,6 @@ class ProductSerializer(serializers.ModelSerializer):
 
 
 # --- CART SERIALIZERS ---
-class CartItemSerializer(serializers.ModelSerializer):
-    product = ProductSerializer(read_only=True)
-    product_id = serializers.PrimaryKeyRelatedField(
-        queryset=Product.objects.all(), source='product', write_only=True
-    )
-    total_price = serializers.SerializerMethodField()
-
-    class Meta:
-        model = CartItem
-        fields = ['id', 'product', 'product_id', 'quantity', 'total_price']
-
-    def get_total_price(self, obj):
-        return obj.quantity * obj.product.price
-
-
-from rest_framework import serializers
-from .models import Cart, CartItem, Product
-
 # 1. Individual Product Item Blueprint inside the Cart
 class CartItemSerializer(serializers.ModelSerializer):
     product_name = serializers.CharField(source='product.name', read_only=True)
@@ -108,19 +165,16 @@ class OrderItemSerializer(serializers.ModelSerializer):
 
 class OrderSerializer(serializers.ModelSerializer):
     items = OrderItemSerializer(many=True, read_only=True)
+    shipping_address = AddressSerializer(read_only=True)
+    billing_address = AddressSerializer(read_only=True)
 
     class Meta:
         model = Order
         fields = [
-            'id', 'order_number', 'total_amount', 'tax_amount', 
-            'shipping_amount', 'order_status', 'created_at', 'items'
+            'id', 'order_number', 'total_amount', 'tax_amount',
+            'shipping_amount', 'order_status', 'shipping_address',
+            'billing_address', 'created_at', 'items'
         ]
-
-
-class ProductImageSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = ProductImage
-        fields = ['id', 'product', 'image', 'is_primary', 'sort_order'] # 'product' is the ID of the product this image belongs to
 
 
 

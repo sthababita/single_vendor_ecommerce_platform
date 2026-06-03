@@ -5,16 +5,17 @@ from django.shortcuts import render
 # Create your views here.
 from rest_framework import viewsets, status
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly
+from rest_framework.permissions import AllowAny, IsAuthenticated, IsAuthenticatedOrReadOnly
 from rest_framework.decorators import action
+from rest_framework.views import APIView
 
-from .models import Category, Product, Cart, CartItem, Order, OrderItem, ProductImage, Payment
+from .models import Address, Category, Product, Cart, CartItem, Order, OrderItem, ProductImage, Payment
 from rest_framework.parsers import MultiPartParser, FormParser
 from .serializers import ProductImageSerializer
 
 from .serializers import (
     CategorySerializer, ProductSerializer, 
-    CartSerializer, CartItemSerializer, OrderSerializer, AddToCartSerializer
+    CartSerializer, CartItemSerializer, OrderSerializer, AddToCartSerializer, UserRegistrationSerializer
 )
 
 # 1. PRODUCT VIEWSET (Publicly readable, writeable only by Admin/Staff)
@@ -31,6 +32,20 @@ class CategoryViewSet(viewsets.ModelViewSet):
     serializer_class = CategorySerializer
     permission_classes = [IsAuthenticatedOrReadOnly]
     lookup_field = 'slug'
+
+
+# 2.5 USER REGISTRATION (Stores shipping/billing addresses at signup)
+class UserRegistrationView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request, *args, **kwargs):
+        serializer = UserRegistrationSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = serializer.save()
+        return Response({
+            "message": "User registered successfully.",
+            "user_id": user.id
+        }, status=status.HTTP_201_CREATED)
 
 
 # 3. SHOPPING CART VIEWSET (Private per active log-in session)
@@ -113,12 +128,19 @@ class OrderViewSet(viewsets.ModelViewSet):
         import uuid
         order_number = f"ORD-{uuid.uuid4().hex[:8].upper()}"
 
+        shipping_address = Address.objects.filter(user=user, address_type='shipping', is_default=True).first() or \
+            Address.objects.filter(user=user, address_type='shipping').first()
+        billing_address = Address.objects.filter(user=user, address_type='billing', is_default=True).first() or \
+            Address.objects.filter(user=user, address_type='billing').first()
+
         # Initialize Order
         order = Order.objects.create(
             user=user,
             order_number=order_number,
             total_amount=sum(item.quantity * item.product.price for item in cart.items.all()),
-            order_status='pending'
+            order_status='pending',
+            shipping_address=shipping_address,
+            billing_address=billing_address,
         )
 
         # Move snapshot items from CartItem entries to OrderItem models

@@ -9,6 +9,8 @@ from .models import (
     Address, Category, Product, ProductImage, 
     Cart, CartItem, Order, OrderItem, Payment, Shipment
 )
+from django.contrib.auth.models import User
+from django.shortcuts import redirect
 
 # ==========================================
 # 1. INLINES (Manage related records inline)
@@ -262,6 +264,16 @@ class OrderAdmin(admin.ModelAdmin):
                 self.admin_site.admin_view(self.product_price_view),
                 name='base_order_product_price',
             ),
+            path(
+                'cart-items/<int:user_id>/',
+                self.admin_site.admin_view(self.cart_items_view),
+                name='base_order_cart_items',
+            ),
+            path(
+                'prefill-from-cart/',
+                self.admin_site.admin_view(self.prefill_from_cart_view),
+                name='base_order_prefill_from_cart',
+            ),
         ]
         return custom_urls + super().get_urls()
 
@@ -286,6 +298,80 @@ class OrderAdmin(admin.ModelAdmin):
             'price': str(product.price),
             'quantity': quantity,
         })
+
+    def cart_items_view(self, request, user_id):
+        try:
+            cart = Cart.objects.filter(user_id=user_id).first()
+        except Exception:
+            cart = None
+
+        shipping_address = Address.objects.filter(user_id=user_id, address_type='shipping', is_default=True).first() or \
+            Address.objects.filter(user_id=user_id, address_type='shipping').first()
+        billing_address = Address.objects.filter(user_id=user_id, address_type='billing', is_default=True).first() or \
+            Address.objects.filter(user_id=user_id, address_type='billing').first()
+
+        items = []
+        if cart:
+            for ci in cart.items.select_related('product').all():
+                items.append({
+                    'product_id': ci.product_id,
+                    'product_name': ci.product.name,
+                    'quantity': ci.quantity,
+                    'price': str(ci.product.price),
+                })
+
+        return JsonResponse({
+            'items': items,
+            'shipping_address_id': shipping_address.id if shipping_address else None,
+            'billing_address_id': billing_address.id if billing_address else None,
+        })
+
+    def prefill_from_cart_view(self, request):
+        user_id = request.GET.get('user_id')
+        if not user_id:
+            return JsonResponse({'error': 'user_id required'}, status=400)
+
+        try:
+            user = User.objects.get(pk=user_id)
+        except User.DoesNotExist:
+            return JsonResponse({'error': 'user not found'}, status=404)
+
+        # pick default addresses if available
+        shipping_address = Address.objects.filter(user=user, address_type='shipping', is_default=True).first() or \
+            Address.objects.filter(user=user, address_type='shipping').first()
+        billing_address = Address.objects.filter(user=user, address_type='billing', is_default=True).first() or \
+            Address.objects.filter(user=user, address_type='billing').first()
+
+        # create order and items from cart
+        import uuid
+        order = Order.objects.create(
+            user=user,
+            order_number=f"ORD-{uuid.uuid4().hex[:8].upper()}",
+            total_amount=0,
+            order_status='pending',
+            shipping_address=shipping_address,
+            billing_address=billing_address,
+        )
+
+        total = Decimal('0.00')
+        for ci in CartItem.objects.filter(cart__user=user).select_related('product'):
+            unit_price = ci.product.price
+            quantity = ci.quantity or 1
+            OrderItem.objects.create(
+                order=order,
+                product=ci.product,
+                quantity=quantity,
+                unit_price=unit_price,
+            )
+            total += Decimal(str(unit_price)) * Decimal(str(quantity))
+
+        order.total_amount = total + (order.tax_amount or Decimal('0.00')) + (order.shipping_amount or Decimal('0.00'))
+        order.save()
+
+        # Redirect admin to the change page for the created order so items are visible
+        change_url = f"{self.admin_site.name}:{self.model._meta.app_label}_{self.model._meta.model_name}_change"
+        from django.urls import reverse
+        return redirect(reverse('admin:base_order_change', args=[order.pk]))
 
 
 @admin.register(Cart)
@@ -342,4 +428,9 @@ class PaymentAdmin(admin.ModelAdmin):
     get_due_amount.short_description = 'Due Amount'
 
 
-admin.site.register(Shipment)
+@admin.register(Shipment)
+class ShipmentAdmin(admin.ModelAdmin):
+    list_display = ('order', 'shipment_status', 'shipped_at', 'estimated_delivery')
+    fields = ('order', 'shipment_status', 'shipped_at', 'estimated_delivery')
+    list_filter = ('shipment_status',)
+    search_fields = ('order__order_number',)
