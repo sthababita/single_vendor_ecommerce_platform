@@ -38,14 +38,17 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'corsheaders',  # CORS support for frontend
     'base',  # Our main app for the e-commerce platform
     'rest_framework',  # Django REST Framework for API development
+    'rest_framework.authtoken',  # Token authentication for API
      # Required for handling image uploads (Product Images)
 
 ]
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'corsheaders.middleware.CorsMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -147,3 +150,11 @@ MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 KHALTI_SECRET_KEY = "cba363286b624ebcbe642e645486572e"  
 KHALTI_INITIATE_URL = "https://dev.khalti.com/api/v2/epayment/initiate/"
 KHALTI_LOOKUP_URL = "https://dev.khalti.com/api/v2/epayment/lookup/"
+
+# CORS Configuration - Allow frontend to communicate with API
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:8080",
+    "http://127.0.0.1:8080",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]

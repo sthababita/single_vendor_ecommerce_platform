@@ -84,6 +84,18 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
         return user
 
 
+class UserLoginSerializer(serializers.Serializer):
+    username = serializers.CharField()
+    password = serializers.CharField(write_only=True)
+
+    def validate(self, data):
+        username = data.get('username')
+        password = data.get('password')
+        if not username or not password:
+            raise serializers.ValidationError('Username and password are required.')
+        return data
+
+
 # --- PRODUCT CATALOG SERIALIZERS ---
 class ProductImageSerializer(serializers.ModelSerializer):
     class Meta:

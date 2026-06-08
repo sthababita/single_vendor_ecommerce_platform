@@ -2,7 +2,7 @@
 
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import KhaltiPaymentViewSet, ProductViewSet, CategoryViewSet, CartViewSet, OrderViewSet, ProductImageViewSet, UserRegistrationView
+from .views import KhaltiPaymentViewSet, ProductViewSet, CategoryViewSet, CartViewSet, OrderViewSet, ProductImageViewSet, UserRegistrationView, UserLoginView
 
 # Create a router and register our viewsets with it.
 router = DefaultRouter()
@@ -16,5 +16,6 @@ router.register(r'khalti-payment', KhaltiPaymentViewSet, basename='khalti-paymen
 # The API URLs are now determined automatically by the router.
 urlpatterns = [
     path('register/', UserRegistrationView.as_view(), name='user-register'),
+    path('login/', UserLoginView.as_view(), name='user-login'),
     path('', include(router.urls)),
 ]

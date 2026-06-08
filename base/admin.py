@@ -218,6 +218,9 @@ class OrderAdmin(admin.ModelAdmin):
         instances = formset.save(commit=False)
 
         for deleted_object in formset.deleted_objects:
+            if isinstance(deleted_object, OrderItem) and deleted_object.product:
+                deleted_object.product.stock_quantity += deleted_object.quantity
+                deleted_object.product.save()
             deleted_object.delete()
 
         for instance in instances:
@@ -231,6 +234,20 @@ class OrderAdmin(admin.ModelAdmin):
                         product=instance.product,
                     ).first()
                     instance.quantity = cart_item.quantity if cart_item else 1
+
+                # Adjust product inventory when order items are created or updated in admin
+                if instance._state.adding:
+                    instance.product.stock_quantity = max(instance.product.stock_quantity - instance.quantity, 0)
+                    instance.product.save()
+                else:
+                    previous = OrderItem.objects.filter(pk=instance.pk).first()
+                    if previous and previous.quantity != instance.quantity:
+                        diff = instance.quantity - previous.quantity
+                        if diff > 0:
+                            instance.product.stock_quantity = max(instance.product.stock_quantity - diff, 0)
+                        elif diff < 0:
+                            instance.product.stock_quantity += abs(diff)
+                        instance.product.save()
 
             instance.save()
 
@@ -363,6 +380,8 @@ class OrderAdmin(admin.ModelAdmin):
                 quantity=quantity,
                 unit_price=unit_price,
             )
+            ci.product.stock_quantity = max(ci.product.stock_quantity - quantity, 0)
+            ci.product.save()
             total += Decimal(str(unit_price)) * Decimal(str(quantity))
 
         order.total_amount = total + (order.tax_amount or Decimal('0.00')) + (order.shipping_amount or Decimal('0.00'))

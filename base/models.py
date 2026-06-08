@@ -179,6 +179,22 @@ class Shipment(models.Model):
         ('delivered', 'Delivered'),
     )
 
+    SHIPMENT_TO_ORDER_STATUS = {
+        'manifest': 'processing',
+        'in_transit': 'shipped',
+        'out_for_delivery': 'shipped',
+        'delivered': 'delivered',
+    }
+
+    ORDER_STATUS_RANK = {
+        'pending': 0,
+        'processing': 1,
+        'shipped': 2,
+        'delivered': 3,
+        'cancelled': -1,
+        'refunded': -1,
+    }
+
     order = models.OneToOneField(Order, on_delete=models.CASCADE, related_name='shipment')
     carrier = models.CharField(max_length=50)
     tracking_number = models.CharField(max_length=100, blank=True, null=True)
@@ -188,3 +204,21 @@ class Shipment(models.Model):
 
     def __str__(self):
         return f"Shipment for Order {self.order.order_number}"
+
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+
+        if not self.order_id:
+            return
+
+        target_order_status = self.SHIPMENT_TO_ORDER_STATUS.get(self.shipment_status)
+        if not target_order_status:
+            return
+
+        current_order_status = self.order.order_status
+        if current_order_status in ('cancelled', 'refunded'):
+            return
+
+        if self.ORDER_STATUS_RANK.get(target_order_status, 0) > self.ORDER_STATUS_RANK.get(current_order_status, 0):
+            self.order.order_status = target_order_status
+            self.order.save(update_fields=['order_status'])

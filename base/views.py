@@ -1,6 +1,7 @@
 from decimal import Decimal
 
 from django.shortcuts import render
+from django.contrib.auth import authenticate, login
 
 # Create your views here.
 from rest_framework import viewsets, status
@@ -8,6 +9,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated, IsAuthenticatedOrReadOnly
 from rest_framework.decorators import action
 from rest_framework.views import APIView
+from rest_framework.authtoken.models import Token
 
 from .models import Address, Category, Product, Cart, CartItem, Order, OrderItem, ProductImage, Payment
 from rest_framework.parsers import MultiPartParser, FormParser
@@ -15,7 +17,8 @@ from .serializers import ProductImageSerializer
 
 from .serializers import (
     CategorySerializer, ProductSerializer, 
-    CartSerializer, CartItemSerializer, OrderSerializer, AddToCartSerializer, UserRegistrationSerializer
+    CartSerializer, CartItemSerializer, OrderSerializer, AddToCartSerializer,
+    UserRegistrationSerializer, UserLoginSerializer, UserSerializer
 )
 
 # 1. PRODUCT VIEWSET (Publicly readable, writeable only by Admin/Staff)
@@ -46,6 +49,32 @@ class UserRegistrationView(APIView):
             "message": "User registered successfully.",
             "user_id": user.id
         }, status=status.HTTP_201_CREATED)
+
+
+class UserLoginView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request, *args, **kwargs):
+        serializer = UserLoginSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        username = serializer.validated_data['username']
+        password = serializer.validated_data['password']
+        user = authenticate(request, username=username, password=password)
+
+        if user is None:
+            return Response({"error": "Invalid username or password."}, status=status.HTTP_400_BAD_REQUEST)
+
+        login(request, user)
+        
+        # Generate or get token for the user
+        token, created = Token.objects.get_or_create(user=user)
+        
+        return Response({
+            "message": "Login successful.",
+            "token": token.key,
+            "user": UserSerializer(user).data,
+        }, status=status.HTTP_200_OK)
 
 
 # 3. SHOPPING CART VIEWSET (Private per active log-in session)
